@@ -20,6 +20,12 @@ contract GovernorAlpha is Owner{
     
     
     WeightMgr public weightMgr;
+    TimelockInterface public timelock;
+    
+    constructor(address _weightMgrAddress, address _timelock) public {
+        weightMgr = WeightMgr(_weightMgrAddress);
+        timelock = TimelockInterface(_timelock);
+    }
     
     uint256 public quorumVotes;
     
@@ -79,7 +85,7 @@ contract GovernorAlpha is Owner{
         bool support;
 
         /// @notice The number of votes the voter had, which were cast
-        uint96 votes;
+        uint256 votes;
     }
 
     /// @notice Possible states that a proposal may be in
@@ -115,9 +121,7 @@ contract GovernorAlpha is Owner{
     /// @notice An event emitted when a proposal has been executed in the Timelock
     event ProposalExecuted(uint id);
 
-    constructor(address _weightMgrAddress) public {
-        weightMgr = WeightMgr(_weightMgrAddress);
-    }
+
 
     function propose(address[] memory targets, uint[] memory values, string[] memory signatures, bytes[] memory calldatas, string memory description) public returns (uint) {
         require(targets.length == values.length && targets.length == signatures.length && targets.length == calldatas.length, "proposal function information arity mismatch");
@@ -171,7 +175,7 @@ contract GovernorAlpha is Owner{
             return ProposalState.Succeeded;
         } else if (proposal.executed) {
             return ProposalState.Executed;
-        } else if (block.timestamp >= proposal.eta.add(555)) {//
+        } else if (block.timestamp >= proposal.eta.add(timelock.GRACE_PERIOD())) {//
             return ProposalState.Expired;
         } else {
             return ProposalState.Queued;
@@ -213,10 +217,45 @@ contract GovernorAlpha is Owner{
         emit VoteCast(voter, proposalId, support, votes);
     }
     
+    function queue(uint proposalId) public {
+        require(state(proposalId) == ProposalState.Succeeded, "queue: proposal can only be queued if it is succeeded");
+        Proposal storage proposal = proposals[proposalId];
+        uint eta = block.timestamp.add(timelock.delay());
+        for (uint i = 0; i < proposal.targets.length; i++) {
+            _queueOrRevert(proposal.targets[i], proposal.values[i], proposal.signatures[i], proposal.calldatas[i], eta);
+        }
+        proposal.eta = eta;
+        emit ProposalQueued(proposalId, eta);
+    }
+
+    function _queueOrRevert(address target, uint value, string memory signature, bytes memory data, uint eta) internal {
+        require(!timelock.queuedTransactions(keccak256(abi.encode(target, value, signature, data, eta))), "GovernorAlpha::_queueOrRevert: proposal action already queued at eta");
+        timelock.queueTransaction(target, value, signature, data, eta);
+    }
+
+    function execute(uint proposalId) public payable {
+        require(state(proposalId) == ProposalState.Queued, "GovernorAlpha::execute: proposal can only be executed if it is queued");
+        Proposal storage proposal = proposals[proposalId];
+        proposal.executed = true;
+        for (uint i = 0; i < proposal.targets.length; i++) {
+            timelock.executeTransaction.value(proposal.values[i])(proposal.targets[i], proposal.values[i], proposal.signatures[i], proposal.calldatas[i], proposal.eta);
+        }
+        emit ProposalExecuted(proposalId);
+    }
+
     function votingDelay() public pure returns (uint) { return 1; } // 1 block
     function votingPeriod() public pure returns (uint) { return 20000; } 
     
     function getChainId() internal pure returns (uint) {
         return 1;
     }
+}
+
+interface TimelockInterface {
+    function delay() external view returns (uint);
+    function GRACE_PERIOD() external view returns (uint);
+    function queuedTransactions(bytes32 hash) external view returns (bool);
+    function queueTransaction(address target, uint value, string  signature, bytes  data, uint eta) external returns (bytes32);
+    function cancelTransaction(address target, uint value, string  signature, bytes  data, uint eta) external;
+    function executeTransaction(address target, uint value, string  signature, bytes  data, uint eta) external payable returns (bytes memory);
 }
