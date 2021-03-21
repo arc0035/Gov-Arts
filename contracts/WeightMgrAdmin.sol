@@ -29,6 +29,9 @@ contract WeightMgrAdmin is WeightMgr, Owner{
         emit SetWeight( _to, msg.sender, _amount);
     } 
 
+    function delegate(address from, address _delegatee) public onlyOwner{
+        _delegate(from, _delegatee);
+    }
 }
 
 

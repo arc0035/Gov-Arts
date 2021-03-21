@@ -33,6 +33,9 @@ contract WeightMgrIWO is WeightMgr, Owner{
     }
     
 
+    function delegate(address _delegatee) public {
+        _delegate(msg.sender, _delegatee);
+    }
     
     function mint(address _to, uint256 _amount) public onlyOwner{
         weights[_to] = weights[_to].add(_amount);
@@ -52,9 +55,3 @@ contract WeightMgrIWO is WeightMgr, Owner{
         emit Transfer(_to, address(0), _amount);
     } 
 }
-
-
-
-
-
-
